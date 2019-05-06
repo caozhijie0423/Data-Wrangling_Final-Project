@@ -1,0 +1,325 @@
+---
+title: "Final Project"
+author: "czj"
+date: "2019/5/6"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = FALSE)
+library(tidyverse)
+library(rvest)
+library(lubridate)
+library(RColorBrewer)
+library(forcats)
+library(gridExtra)
+library(readr)
+```
+
+## extract each game's website,opponent and game result
+```{r}
+url<-'http://www.espn.com/nba/team/schedule/_/name/okc/seasontype/2'
+game_detail<-unlist(read_html(url)%>%html_nodes(".ml4 a")%>% html_attrs())
+opponent<-read_html(url)%>%html_nodes('.tc+ span a')%>%html_text()
+opponent<-str_remove_all(opponent,' ')
+game_result<-read_html(url)%>%html_nodes('.fw-bold')%>%html_text()
+game_result<-ifelse(game_result[-1]=='L',0,1)
+```
+##extract date and convert to 'Date' type
+```{r}
+date<-read_html(url)%>%html_nodes('.Table2__td:nth-child(1) span')%>%html_text()
+date<-date[-1] %>% str_split(',')%>%unlist()
+game_date<-rep('NA',82)
+for(i in 1:82){
+  m=unlist(str_split(date[2*i],' '))[2]
+  d=unlist(str_split(date[2*i],' '))[3]
+  if (i<=36){
+  game_date[i]<-as.character(as.Date(paste0('2018','-',m,'-',d),'%Y-%b-%d '))
+  }
+  else{
+    game_date[i]<-as.character(as.Date(paste0('2019','-',m,'-',d),'%Y-%b-%d '))
+  }
+}
+```
+## set up function to extract each game
+```{r}
+extract_each_game<-function(game_id){
+id=str_extract_all(game_id,'\\d+')
+boxscore_url<-paste0('http://www.espn.com/nba/boxscore?gameId=',id)
+
+table<-read_html(boxscore_url)%>%html_table()
+team_name<-read_html(boxscore_url)%>%html_nodes('.short-name')%>%html_text()
+#determine if Thunder is home or away
+if(team_name[1]=='Thunder'){
+  x<-table[[2]]
+  x$home_away<-'home'
+} else{ 
+  x<-table[[3]]
+  x$home_way<-'away'
+  }
+x$Starters<-str_extract(x$Starters,'[A-Z].\\s[A-Z][a-z]+')
+
+
+#select players that appear on court
+x<-x[x$MIN>0,]
+x<-x[grepl('\\d',x$MIN),]
+#add colomns of shooting percentage
+new_stats<-separate(x,FG,into=c('FG-shoot successful','FG-shooting numbers'),sep='-',convert=TRUE)
+new_stats$FG_Percentage<-round(new_stats$`FG-shoot successful`/new_stats$`FG-shooting numbers`,3)
+new_stats<-new_stats%>%separate( '3PT',into=c('3PT-successful','3PT-numbers'),sep='-',convert=TRUE)
+new_stats$`3PT_Percentage`<-round(new_stats$`3PT-successful`/new_stats$`3PT-numbers`,3)
+new_stats<-new_stats%>%separate('FT',into=c('FT-successful','FT-numbers'),sep='-',convert=TRUE)
+new_stats$`FT_Percentage`<-round(new_stats$`FT-successful`/new_stats$`FT-numbers`,3)
+
+#select dataframe 
+new_stats<-new_stats%>%select(Starters,MIN,PTS,FG_Percentage,`3PT_Percentage`,`FT_Percentage`,REB,AST,STL,BLK,`+/-`,`FG-shoot successful`,
+                              `FG-shooting numbers`,`3PT-successful`,`3PT-numbers`,`FT-successful`,`FT-numbers`)
+#new_stats$`3PT_Percentage`[which(new_stats$`3PT_Percentage`=='NaN')]<-0.00
+}
+all_game_stats<-data.frame()
+for(i in c(1:82)){
+new_stats<-extract_each_game(game_detail[2*i])
+new_stats$Date<-game_date[i]
+new_stats$Opponent=opponent[i]
+all_game_stats<-bind_rows(all_game_stats,new_stats)
+}
+head(all_game_stats)
+```
+#### write dataframe to csv
+```{r}
+write_csv(all_game_stats,path = 'all_game_stats.csv')
+```
+
+## summarize each players' stats
+```{r}
+all_game_stats$MIN<-as.numeric(all_game_stats$MIN)
+each_player_stats<-all_game_stats%>%
+  group_by(Starters)%>%
+  summarise(Avg_Min=mean(as.numeric(MIN)),Avg_PTS=mean(as.numeric(PTS)),Avg_REB=mean(as.numeric(REB)),Avg_AST=mean(as.numeric(AST)),
+  Avg_STL=mean(as.numeric(STL)),Avg_BLK=mean(as.numeric(BLK)),Avg_FG=sum(as.numeric(`FG-shoot successful`))/sum(as.numeric(`FG-shooting numbers`)),
+  Avg_3PT=sum(as.numeric(`3PT-successful`))/sum(as.numeric(`3PT-numbers`)),Avg_FT=sum(as.numeric(`FT-successful`))/sum(as.numeric(`FT-numbers`)),
+  Avg_PM=mean(as.numeric(`+/-`)))
+
+```
+### plot 
+```{r}
+p1<-each_player_stats %>%arrange(desc(Avg_Min)) %>%slice(1:10)%>%
+    ggplot(aes(x=fct_reorder(Starters,.x=Avg_Min,.desc = TRUE),y=Avg_Min))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[2])+theme_classic()+
+  theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='Average Minute',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(10,40),breaks=seq(10,40,2))
+
+p2<-each_player_stats %>%arrange(desc(Avg_PTS)) %>%slice(1:10)%>%
+  ggplot(aes(x=fct_reorder(Starters,.x=Avg_PTS,.desc = TRUE),y=Avg_PTS))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[2])+theme_classic()+
+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='Average Points',x='Players')+theme(plot.title = element_text(hjust = 0.5))+scale_y_continuous(limits =c(0,30),breaks=seq(0,30,2))
+
+p3<-each_player_stats %>%arrange(desc(Avg_REB)) %>%slice(1:10)%>%
+  ggplot(aes(x=fct_reorder(Starters,.x=Avg_REB,.desc = TRUE),y=Avg_REB))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[2])+theme_classic()+
+  theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='Average Rebound',x='Players')+theme(plot.title = element_text(hjust = 0.5))+scale_y_continuous(limits =c(0,12),breaks=seq(0,12,2))
+
+p4<-each_player_stats %>%arrange(desc(Avg_AST)) %>%slice(1:10)%>%
+  ggplot(aes(x=fct_reorder(Starters,.x=Avg_AST,.desc = TRUE),y=Avg_AST))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[3])+theme_classic()+
+  theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='Average Assist',x='Players')+theme(plot.title = element_text(hjust = 0.5))+scale_y_continuous(limits =c(0,12),breaks=seq(0,12,2))
+
+p5<-each_player_stats %>%arrange(desc(Avg_STL)) %>%slice(1:10)%>%
+  ggplot(aes(x=fct_reorder(Starters,.x=Avg_STL,.desc = TRUE),y=Avg_STL))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[3])+theme_classic()+
+  theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='Average Steal',x='Players')+theme(plot.title = element_text(hjust = 0.5))+scale_y_continuous(limits =c(0,3),breaks=seq(0,3,0.5))
+
+p6<-each_player_stats %>%arrange(desc(Avg_BLK)) %>%slice(1:10)%>%
+  ggplot(aes(x=fct_reorder(Starters,.x=Avg_BLK,.desc = TRUE),y=Avg_BLK))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[3])+theme_classic()+
+  theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='Average Block',x='Players')+theme(plot.title = element_text(hjust = 0.5))+scale_y_continuous(limits =c(0,2),breaks=seq(0,2,0.5))
+
+p7<-each_player_stats %>%arrange(desc(Avg_FG)) %>%slice(1:10)%>%
+  ggplot(aes(x=fct_reorder(Starters,.x=Avg_FG,.desc = TRUE),y=Avg_FG))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[4])+theme_classic()+
+  theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='Field Goal Percentage',x='Players')+theme(plot.title = element_text(hjust = 0.5))+scale_y_continuous(limits =c(0.3,0.6),breaks=seq(0.3,0.6,0.05))
+
+p8<-each_player_stats %>%arrange(desc(Avg_3PT)) %>%slice(1:10)%>%
+  ggplot(aes(x=fct_reorder(Starters,.x=Avg_3PT,.desc = TRUE),y=Avg_3PT))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[4])+theme_classic()+
+  theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='3-Point Percentage',x='Players')+theme(plot.title = element_text(hjust = 0.5))+scale_y_continuous(limits =c(0.3,0.5),breaks=seq(0.3,0.5,0.05))
+p9<-each_player_stats %>%arrange(desc(Avg_PM)) %>%slice(1:10)%>%
+  ggplot(aes(x=fct_reorder(Starters,.x=Avg_PM,.desc = TRUE),y=Avg_PM))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[4])+theme_classic()+
+  theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))+geom_line(group = 1)+labs(title='Plus/Mins',x='Players')+theme(plot.title = element_text(hjust = 0.5))+scale_y_continuous(limits =c(-2,7),breaks=seq(-2,7,1))
+plotlist<-list(p1,p2,p3,p4,p5,p6,p7,p8,p9)
+grid.arrange(grobs=plotlist,ncol = 3)
+```
+
+## summarize whole team's stats
+```{r}
+all_game_stats$Month<-month(all_game_stats$Date)
+all_game_stats<-within(all_game_stats,{
+  Month[Month==10]<-'Oct'
+  Month[Month==11]<-'Nov'
+  Month[Month==12]<-'Dec'
+  Month[Month==1]<-'Jan'
+  Month[Month==2]<-'Feb'
+  Month[Month==3]<-'May'
+  Month[Month==4]<-'Apr'
+}
+)
+team_stats<-all_game_stats%>%group_by(Date,Month,Opponent) %>%
+  summarise(PTS=sum(as.numeric(PTS)),REB=sum(as.numeric(REB)),AST=sum(as.numeric(AST)),
+            STL=sum(as.numeric(STL)),BLK=sum(as.numeric(BLK)),FG=sum(as.numeric(`FG-shoot successful`))/sum(as.numeric(`FG-shooting numbers`)),
+            `3PT`=sum(as.numeric(`3PT-successful`))/sum(as.numeric(`3PT-numbers`)),FT=sum(as.numeric(`FT-successful`))/sum(as.numeric(`FT-numbers`)))
+
+head(team_stats)
+  
+```
+#### write dataset-team stats
+```{r}
+write_csv(team_stats,'../Data-Wrangling_Final-Project/team_stats.csv')
+```
+### month by month
+```{r}
+team<-function(x){
+team_stats_month<-team_stats%>%group_by(get(x))%>%
+  summarise(Avg_PTS=mean(as.numeric(PTS)),Avg_REB=mean(as.numeric(REB)),Avg_AST=mean(as.numeric(AST)),
+            Avg_STL=mean(as.numeric(STL)),Avg_BLK=mean(as.numeric(BLK)))
+
+team_stats_month<-all_game_stats%>%group_by(get(x))%>%
+  summarise(FG=sum(as.numeric(`FG-shoot successful`))/sum(as.numeric(`FG-shooting numbers`)),
+            `3PT`=sum(as.numeric(`3PT-successful`))/sum(as.numeric(`3PT-numbers`)),FT=sum(as.numeric(`FT-successful`))/sum(as.numeric(`FT-numbers`)))%>%
+  right_join(team_stats_month)
+}
+team_stats_month<-team('Month')
+colnames(team_stats_month)[1]<-'Month'
+
+Percentage_team<-gather(team_stats_month,'FG','3PT','FT',key = 'Category',value = 'Percentage')
+Percentage_team$Category<-factor(Percentage_team$Category)
+Percentage_team$Month<-factor(Percentage_team$Month,levels = c('Oct','Nov','Dec','Jan','Feb','May','Apr'))
+ggplot(Percentage_team,aes(x=Month,y=Percentage,fill=Category))+geom_bar(stat = 'identity',position='dodge')+
+  geom_text(aes(label=round(Percentage,2)), vjust=0.02,color="black", size=2.5)+theme_minimal()+labs(title = 'Goal Percentage')+theme(plot.title = element_text(hjust = 0.5))+
+ scale_fill_manual(values=brewer.pal(7, "Set2")[c(1,3,5)])
+
+Attack<-gather(team_stats_month,'Avg_PTS','Avg_REB','Avg_AST',key='Category',value='value')
+Attack$Category<-factor(Attack$Category)
+Attack$Month<-factor(Attack$Month,levels = c('Oct','Nov','Dec','Jan','Feb','May','Apr'))
+
+ggplot(Attack,aes(x=Month,y=value,fill=Category))+geom_bar(stat = 'identity',position='dodge')+
+  geom_text(aes(label=round(value,2)),vjust=0.02,color="black", size=2.5)+theme_minimal()+labs(title = 'Attacking Index')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_fill_manual(values=brewer.pal(7, "Set2")[c(1,3,5)])
+```
+###opponent
+```{r}
+east_conference<-c('Milwaukee','Toronto','Philadelphia','Boston','Indiana','Brooklyn','Orlando','Detroit','Charlotte',
+                   'Miami','Washington','Atlanta','Chicago','Cleveland','NewYork')
+west_conference<-c('GoldenState','Denver','Portland','Houston','Utah','SanAntonio','LA','Sacramento','LosAngeles','Minnesota',
+                   'Memphis','NewOrleans','Dallas','Phoenix')
+
+team_stats$Game_result<-game_result
+team_stats<-within(team_stats,{
+  Conference<-NA 
+  Conference[Opponent %in% east_conference]<-'east_conference'
+  Conference[Opponent %in% west_conference]<-'west_conference'
+}
+)
+
+
+
+detail_stats<-function(x){
+  game_stats<-filter(all_game_stats,Opponent %in% x)
+  team_stats2<-filter(team_stats,Opponent %in% x)
+  detail<-apply(team_stats2[,c(4:8)],2,mean)
+  detail2<-data.frame(matrix(NA,1,8))
+  detail2[,c(1:5)]<-detail
+  detail2[,6]<-sum(game_stats$`FG-shoot successful`)/sum(game_stats$`FG-shooting numbers`)
+  detail2[,7]<-sum(game_stats$`3PT-successful`)/sum(game_stats$`3PT-numbers`)  
+  detail2[,8]<-sum(game_stats$`FT-successful`)/sum(game_stats$`FT-numbers`)
+  
+colnames(detail2)<-c(names(detail),c('Avg_FG','Avg_3PT','Avg_FT'))         
+return(detail2)
+}
+```
+###plot
+```{r}
+east_stats<-detail_stats(east_conference)
+west_stats<-detail_stats(west_conference)
+
+frame1<-bind_rows(east_stats,west_stats)
+frame1$Conference<-c('east','west')
+list_f1<-list()
+plot_conference<-function(i){
+
+  name<-colnames(frame1)[i]
+  a<-ggplot(frame1,aes(x=Conference,y=get(name)))+geom_bar(stat='identity',width = 0.5,fill=brewer.pal(5,"Pastel2")[c(1,2)])+labs(y=colnames(frame1)[i])+theme_gray()+ geom_text(aes(label=round(get(name),2)),vjust=0.2,color="black", size=3)
+
+}
+l=list()
+for (i in 1:8){
+l[[i]]=plot_conference(i)
+}
+grid.arrange(grobs=l,nrow=2)
+
+```
+## logistic regression
+```{r}
+logistic<-team_stats%>%split(.$Conference)%>%
+  map(~glm(Game_result~PTS+REB+AST+STL+BLK+FG+`3PT`+FT,data=.))%>%
+  map(summary)%>%map('coefficients') 
+
+logistic_e<-as.data.frame(logistic$east_conference)
+logistic_e
+
+```
+##import another data source to do parallel comparision
+```{r}
+season_2017<-read.table('2017-2018.txt',sep=',',header = TRUE)
+colnames(season_2017)[2]<-'Players'
+season_2017$Players<-str_extract(season_2017$Players,"[A-Z].*[A-Z][a-z]+\\b")
+
+core_players<-c('Paul George','Russell Westbrook','Steven Adams','Jerami Grant','Terrance Ferguson')
+season_2017<-filter(season_2017,Players %in% core_players)%>%select(Players,Avg_Min=MP,Avg_PTS=PTS.G,Avg_FG=FG.,Avg_REB=TRB,
+                                                            Avg_AST=AST,Avg_STL=STL,Avg_BLK=BLK,Avg_FT=FT.)
+
+season_2018<-filter(each_player_stats,Starters %in% c('P. George','R. Westbrook','S. Adams','J. Grant','T. Ferguson')) %>%select(Players=Starters, 
+Avg_Min,Avg_PTS,Avg_FG,Avg_REB,Avg_AST,Avg_STL,Avg_BLK,Avg_FT) %>%slice(c(1,5,2,4,3))
+season_2018$Players<-as.character(season_2018$Players)
+
+total<-bind_rows(season_2017,season_2018)
+total$Players[1:5]<-total$Players[6:10]
+total[,-1]<-round(total[,-1],1)
+total$Season<-factor(c(rep(2017,5),rep(2018,5)))
+```
+#### plot
+```{r}
+p11<-total %>%ggplot(aes(x=Players,y=Avg_Min,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
+ labs(title='Average Minute',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(0,40),breaks=seq(0,40,5))+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))
+
+p12<-total %>%ggplot(aes(x=Players,y=Avg_PTS,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
+  labs(title='Average Points',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(0,30),breaks=seq(0,30,5))+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))
+
+
+p13<-total %>%ggplot(aes(x=Players,y=Avg_FG,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
+  labs(title='Field Goal Percentage',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(0,0.65),breaks=seq(0,0.65,0.1))+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))
+
+
+p14<-total %>%ggplot(aes(x=Players,y=Avg_FT,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
+  labs(title='Free Throw Percentage',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(0,1),breaks=seq(0,1,0.1))+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))
+
+
+p15<-total %>%ggplot(aes(x=Players,y=Avg_REB,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
+  labs(title='Average Rebound',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(0,12),breaks=seq(0,12,2))+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))
+
+
+p16<-total %>%ggplot(aes(x=Players,y=Avg_AST,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
+  labs(title='Average Assist',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(0,11),breaks=seq(0,11,1))+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))
+
+
+p17<-total %>%ggplot(aes(x=Players,y=Avg_BLK,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
+  labs(title='Average Block',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(0,2),breaks=seq(0,2,0.5))+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))
+
+
+p18<-total %>%ggplot(aes(x=Players,y=Avg_STL,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
+  labs(title='Average Steal',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
+  scale_y_continuous(limits =c(0,3),breaks=seq(0,3,0.5))+theme(axis.text.x=element_text(face="bold",angle=45,hjust =1))
+
+
+grid.arrange(grobs=list(p11,p12,p13,p14,p15,p16,p17,p18),nrow = 3)
+
+```
+
