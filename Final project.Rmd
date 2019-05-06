@@ -101,7 +101,7 @@ each_player_stats<-all_game_stats%>%
   Avg_PM=mean(as.numeric(`+/-`)))
 
 ```
-### plot all related stats
+### plot 
 ```{r}
 p1<-each_player_stats %>%arrange(desc(Avg_Min)) %>%slice(1:10)%>%
     ggplot(aes(x=fct_reorder(Starters,.x=Avg_Min,.desc = TRUE),y=Avg_Min))+geom_point(shape=20,size=5,color=brewer.pal(7, "Set1")[2])+theme_classic()+
@@ -197,7 +197,7 @@ ggplot(Attack,aes(x=Month,y=value,fill=Category))+geom_bar(stat = 'identity',pos
   geom_text(aes(label=round(value,2)),vjust=0.02,color="black", size=2.5)+theme_minimal()+labs(title = 'Attacking Index')+theme(plot.title = element_text(hjust = 0.5))+
   scale_fill_manual(values=brewer.pal(7, "Set2")[c(1,3,5)])
 ```
-###make a colunmn 'conference'
+###opponent
 ```{r}
 east_conference<-c('Milwaukee','Toronto','Philadelphia','Boston','Indiana','Brooklyn','Orlando','Detroit','Charlotte',
                    'Miami','Washington','Atlanta','Chicago','Cleveland','NewYork')
@@ -278,7 +278,7 @@ total$Players[1:5]<-total$Players[6:10]
 total[,-1]<-round(total[,-1],1)
 total$Season<-factor(c(rep(2017,5),rep(2018,5)))
 ```
-#### plot bar to compare each stat
+#### plot
 ```{r}
 p11<-total %>%ggplot(aes(x=Players,y=Avg_Min,fill=Season))+geom_bar(stat = 'identity',position='dodge')+theme_classic()+scale_fill_manual(values=brewer.pal(7, "Accent")[c(1,3)])+
  labs(title='Average Minute',x='Players')+theme(plot.title = element_text(hjust = 0.5))+
