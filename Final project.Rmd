@@ -165,7 +165,7 @@ head(team_stats)
 ```
 #### write dataset-team stats
 ```{r}
-write_csv(team_stats,'../Data-Wrangling_Final-Project/team_stats.csv')
+write_csv(team_stats,'team_stats.csv')
 ```
 ### month by month
 ```{r}
